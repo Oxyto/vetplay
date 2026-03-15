@@ -8,6 +8,10 @@ declare global {
 		// interface PageState {}
 		// interface Platform {}
 	}
+
+	interface ImportMetaEnv {
+		readonly PUBLIC_GEMINI_API_KEY?: string;
+	}
 }
 
 export {};

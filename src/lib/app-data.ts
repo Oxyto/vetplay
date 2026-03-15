@@ -43,6 +43,7 @@ export type CosmeticItem = {
 	price: number;
 	tag: string;
 	description: string;
+	icon: string;
 	accent: string;
 };
 
@@ -53,6 +54,54 @@ export type ReminderItem = {
 	dayLabel: string;
 	done: boolean;
 };
+
+export type JourneyCaseOption = {
+	label: string;
+	feedback: string;
+	correct: boolean;
+};
+
+export type JourneyCaseScenario = {
+	kind: 'case';
+	intro: string;
+	question: string;
+	options: JourneyCaseOption[];
+	successText: string;
+};
+
+export type JourneyQuizQuestion = {
+	prompt: string;
+	choices: string[];
+	correctIndex: number;
+	explanation: string;
+};
+
+export type JourneyQuizScenario = {
+	kind: 'quiz';
+	intro: string;
+	questions: JourneyQuizQuestion[];
+	successText: string;
+};
+
+export type JourneyMiniGameTarget = {
+	id: string;
+	label: string;
+	correct: boolean;
+};
+
+export type JourneyMiniGameScenario = {
+	kind: 'mini-jeu';
+	intro: string;
+	instructions: string;
+	goal: number;
+	targets: JourneyMiniGameTarget[];
+	successText: string;
+};
+
+export type JourneyActivityScenario =
+	| JourneyCaseScenario
+	| JourneyQuizScenario
+	| JourneyMiniGameScenario;
 
 export type VaccinePreset = {
 	id: string;
@@ -342,6 +391,7 @@ export const cosmeticCatalog: CosmeticItem[] = [
 		price: 320,
 		tag: 'Rare',
 		description: 'Blouse brodée pour un look clinique premium.',
+		icon: '🥼',
 		accent: 'mint'
 	},
 	{
@@ -351,6 +401,7 @@ export const cosmeticCatalog: CosmeticItem[] = [
 		price: 190,
 		tag: 'Populaire',
 		description: 'Accessoire brillant pour souligner le portrait.',
+		icon: '🩺',
 		accent: 'gold'
 	},
 	{
@@ -360,6 +411,7 @@ export const cosmeticCatalog: CosmeticItem[] = [
 		price: 480,
 		tag: 'Nouveau',
 		description: 'Décor illustré pour la fiche avatar.',
+		icon: '🌴',
 		accent: 'coral'
 	},
 	{
@@ -369,9 +421,202 @@ export const cosmeticCatalog: CosmeticItem[] = [
 		price: 110,
 		tag: 'Commun',
 		description: 'Petit insigne de spécialiste à équiper sur le profil.',
+		icon: '🏅',
 		accent: 'ink'
 	}
 ];
+
+export const journeyActivityScenarios: Record<JourneyNode['id'], JourneyActivityScenario> = {
+	'w1-1': {
+		kind: 'case',
+		intro: 'Un border collie arrive haletant après un choc léger sur la voie publique.',
+		question: 'Quelle est la première action prioritaire ?',
+		options: [
+			{
+				label: 'Évaluer ABC, oxygéner et prendre les constantes',
+				feedback:
+					"Bonne priorité : tu sécurises l'airway, la ventilation et la perfusion avant le reste.",
+				correct: true
+			},
+			{
+				label: 'Passer directement à la radiographie thoracique',
+				feedback: "L'imagerie vient après la stabilisation initiale.",
+				correct: false
+			},
+			{
+				label: 'Donner à boire et attendre dix minutes',
+				feedback: "Tu perds un temps précieux et tu ne traites pas l'urgence.",
+				correct: false
+			}
+		],
+		successText: 'Patient stabilisé, triage initial validé.'
+	},
+	'w1-2': {
+		kind: 'quiz',
+		intro: 'Réponds aux deux questions pour valider le triage.',
+		questions: [
+			{
+				prompt: 'Un chien convulse encore en salle d’attente. Niveau de priorité ?',
+				choices: ['Différé', 'Immédiat', 'Dans la journée'],
+				correctIndex: 1,
+				explanation: 'Une convulsion active est une urgence immédiate.'
+			},
+			{
+				prompt: 'Muqueuses pâles, CRT allongé et tachycardie suggèrent surtout :',
+				choices: ['Une bonne perfusion', 'Un état de choc', 'Un simple stress'],
+				correctIndex: 1,
+				explanation: 'Ce trio est typique d’une hypoperfusion à traiter vite.'
+			}
+		],
+		successText: 'Quiz triage validé sans erreur critique.'
+	},
+	'w1-3': {
+		kind: 'mini-jeu',
+		intro: 'Repère rapidement les incidences utiles avant la fin du chrono.',
+		instructions: 'Trouve 3 incidences thoraciques correctes. Deux erreurs maximum.',
+		goal: 3,
+		targets: [
+			{ id: 'lat-droite', label: 'Latérale droite', correct: true },
+			{ id: 'vd', label: 'Vue VD', correct: true },
+			{ id: 'lat-gauche', label: 'Latérale gauche', correct: true },
+			{ id: 'oblique-bassin', label: 'Oblique bassin', correct: false },
+			{ id: 'membres', label: 'Incidence membres', correct: false },
+			{ id: 'dentaire', label: 'Vue dentaire', correct: false }
+		],
+		successText: 'Incidences repérées, série thoracique prête.'
+	},
+	'w2-1': {
+		kind: 'quiz',
+		intro: 'Calcule juste pour éviter tout sous-dosage ou surdosage.',
+		questions: [
+			{
+				prompt: 'Pour un chien de 20 kg à 0,2 mg/kg, la dose totale est :',
+				choices: ['2 mg', '4 mg', '8 mg'],
+				correctIndex: 1,
+				explanation: '20 × 0,2 = 4 mg.'
+			},
+			{
+				prompt: 'Tu dois toujours vérifier ensuite :',
+				choices: [
+					'La concentration disponible',
+					'La couleur du flacon seulement',
+					'Le prix unitaire'
+				],
+				correctIndex: 0,
+				explanation: 'La concentration finale conditionne le volume à administrer.'
+			}
+		],
+		successText: 'Posologie sécurisée et vérifiée.'
+	},
+	'w2-2': {
+		kind: 'case',
+		intro: 'Un chien senior en léger surpoids vient en consultation nutrition.',
+		question: 'Quelle stratégie proposes-tu en premier ?',
+		options: [
+			{
+				label: 'Réévaluer l’état corporel puis ajuster la ration progressivement',
+				feedback: 'Bonne approche : objectif réaliste, suivi mesurable et meilleure observance.',
+				correct: true
+			},
+			{
+				label: 'Diviser la ration par deux dès ce soir',
+				feedback: 'Trop brutal : risque de mauvaise observance et d’erreurs de conduite.',
+				correct: false
+			},
+			{
+				label: 'Supprimer toute activité physique pendant un mois',
+				feedback: "L'activité contrôlée fait partie du plan de prise en charge.",
+				correct: false
+			}
+		],
+		successText: 'Plan nutritionnel posé avec progressivité.'
+	},
+	'w2-3': {
+		kind: 'mini-jeu',
+		intro: 'Assemble un protocole cohérent avant validation.',
+		instructions: 'Trouve 3 éléments compatibles. Deux erreurs maximum.',
+		goal: 3,
+		targets: [
+			{ id: 'analgesie', label: 'Analgésie adaptée', correct: true },
+			{ id: 'posologie', label: 'Dose vérifiée', correct: true },
+			{ id: 'contre-indications', label: 'Contre-indications relues', correct: true },
+			{ id: 'double-antibio', label: 'Double antibiotique au hasard', correct: false },
+			{ id: 'dose-estimee', label: 'Dose estimée à vue', correct: false },
+			{ id: 'ordonnance-vide', label: 'Ordonnance incomplète', correct: false }
+		],
+		successText: 'Protocole validé et cohérent.'
+	},
+	'w3-1': {
+		kind: 'case',
+		intro: 'L’échographie abdominale montre plusieurs structures difficiles à identifier.',
+		question: 'Quel réflexe clinique est le plus solide ?',
+		options: [
+			{
+				label: 'Revenir aux repères anatomiques et balayer méthodiquement',
+				feedback: 'Exact : méthode et repères évitent la surinterprétation.',
+				correct: true
+			},
+			{
+				label: 'Conclure immédiatement à une masse sans autre vue',
+				feedback: 'Conclusion trop rapide sans recoupement d’images.',
+				correct: false
+			},
+			{
+				label: 'Changer de patient pour revenir plus tard',
+				feedback: 'Tu perds l’information et ne résous pas le doute diagnostique.',
+				correct: false
+			}
+		],
+		successText: 'Balayage abdominal propre et fiable.'
+	},
+	'w3-2': {
+		kind: 'quiz',
+		intro: 'Valide les bons réflexes de ration thérapeutique.',
+		questions: [
+			{
+				prompt: 'Dans une ration thérapeutique, on ajuste en priorité :',
+				choices: ['Les besoins du patient', 'Le goût du propriétaire', 'Le packaging choisi'],
+				correctIndex: 0,
+				explanation: 'Le plan se construit d’abord autour du besoin clinique du chien.'
+			},
+			{
+				prompt: 'Pour suivre une transition alimentaire, le bon réflexe est :',
+				choices: [
+					'Changer tout d’un coup',
+					'Étaler la transition sur plusieurs jours',
+					'Ne jamais réévaluer'
+				],
+				correctIndex: 1,
+				explanation: 'Une transition progressive limite les troubles digestifs.'
+			}
+		],
+		successText: 'Quiz alimentation validé.'
+	},
+	'w3-3': {
+		kind: 'case',
+		intro: 'Cas final de garde : urgence, imagerie et dosage doivent s’enchaîner sans faute.',
+		question: 'Quelle décision montre la meilleure coordination ?',
+		options: [
+			{
+				label: 'Stabiliser, imager selon indication puis confirmer la dose avant traitement',
+				feedback:
+					'Très bon enchaînement : priorité vitale, confirmation diagnostique puis traitement sécurisé.',
+				correct: true
+			},
+			{
+				label: 'Traiter à l’aveugle puis revoir le dossier après',
+				feedback: 'Trop risqué pour un cas de garde à embranchements.',
+				correct: false
+			},
+			{
+				label: 'Attendre tous les avis avant toute action',
+				feedback: 'Tu retardes une prise en charge qui doit rester dynamique.',
+				correct: false
+			}
+		],
+		successText: 'Boss de garde réussi, parcours maîtrisé.'
+	}
+};
 
 export const avatarStyles = [
 	{

@@ -1,6 +1,21 @@
 const SIZE = 1024;
 const TEXTURE_SIZE = 640;
 
+type LoadedImage = {
+	source: CanvasImageSource;
+	width: number;
+	height: number;
+	release?: () => void;
+};
+
+type StylizeAvatarInput = {
+	file: File;
+	styleId: string;
+	dogName: string;
+	equippedCount: number;
+	sourceUrl?: string;
+};
+
 type StyleTheme = {
 	background: [string, string];
 	accent: string;
@@ -83,7 +98,9 @@ const mixColor = (from: RgbColor, to: RgbColor, ratio: number) =>
 	);
 
 const shiftLightness = (color: RgbColor, amount: number) =>
-	amount >= 0 ? mixColor(color, makeColor(255, 255, 255), amount) : mixColor(color, makeColor(0, 0, 0), -amount);
+	amount >= 0
+		? mixColor(color, makeColor(255, 255, 255), amount)
+		: mixColor(color, makeColor(0, 0, 0), -amount);
 
 const adjustSaturation = (color: RgbColor, factor: number) => {
 	const gray = luminance(color);
@@ -96,7 +113,9 @@ const adjustSaturation = (color: RgbColor, factor: number) => {
 };
 
 const formatColor = (color: RgbColor, alpha = 1) =>
-	alpha < 1 ? `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})` : `rgb(${color.r}, ${color.g}, ${color.b})`;
+	alpha < 1
+		? `rgba(${color.r}, ${color.g}, ${color.b}, ${alpha})`
+		: `rgb(${color.r}, ${color.g}, ${color.b})`;
 
 const escapeXml = (value: string) =>
 	value
@@ -106,23 +125,96 @@ const escapeXml = (value: string) =>
 		.replaceAll('"', '&quot;')
 		.replaceAll("'", '&apos;');
 
-const loadImage = (file: File) =>
-	new Promise<HTMLImageElement>((resolve, reject) => {
-		const url = URL.createObjectURL(file);
+const readFileAsDataUrl = (file: File) =>
+	new Promise<string>((resolve, reject) => {
+		const reader = new FileReader();
+
+		reader.onload = () => {
+			const result = reader.result;
+
+			if (typeof result !== 'string') {
+				reject(new Error("Le fichier image n'a pas pu etre lu."));
+				return;
+			}
+
+			resolve(result);
+		};
+
+		reader.onerror = () => reject(new Error("Le fichier image n'a pas pu etre lu."));
+		reader.readAsDataURL(file);
+	});
+
+const loadHtmlImageFromUrl = (url: string, release?: () => void) =>
+	new Promise<LoadedImage>((resolve, reject) => {
 		const image = new Image();
 
-		image.onload = () => {
-			URL.revokeObjectURL(url);
-			resolve(image);
+		image.onload = async () => {
+			try {
+				if ('decode' in image) {
+					await image.decode();
+				}
+			} catch {
+				// Some browsers signal decode failures despite successful onload.
+			}
+
+			resolve({
+				source: image,
+				width: image.naturalWidth || image.width,
+				height: image.naturalHeight || image.height,
+				release
+			});
 		};
 
 		image.onerror = () => {
-			URL.revokeObjectURL(url);
+			release?.();
 			reject(new Error("Impossible de lire l'image importee."));
 		};
-
 		image.src = url;
 	});
+
+const loadHtmlImageFromDataUrl = async (file: File): Promise<LoadedImage> => {
+	const dataUrl = await readFileAsDataUrl(file);
+	return loadHtmlImageFromUrl(dataUrl);
+};
+
+const loadImage = async (file: File, sourceUrl?: string): Promise<LoadedImage> => {
+	if ('createImageBitmap' in window) {
+		try {
+			const bitmap = await createImageBitmap(file);
+
+			return {
+				source: bitmap,
+				width: bitmap.width,
+				height: bitmap.height,
+				release: () => bitmap.close()
+			};
+		} catch {
+			// Fallback below for browsers/webviews where ImageBitmap decoding fails.
+		}
+	}
+
+	const loaders: Array<() => Promise<LoadedImage>> = [];
+
+	if (sourceUrl) {
+		loaders.push(() => loadHtmlImageFromUrl(sourceUrl));
+	}
+
+	loaders.push(() => {
+		const objectUrl = URL.createObjectURL(file);
+		return loadHtmlImageFromUrl(objectUrl, () => URL.revokeObjectURL(objectUrl));
+	});
+	loaders.push(() => loadHtmlImageFromDataUrl(file));
+
+	for (const load of loaders) {
+		try {
+			return await load();
+		} catch {
+			// Continue through the fallback chain.
+		}
+	}
+
+	throw new Error("Impossible de lire l'image importee.");
+};
 
 const coverCrop = (sourceWidth: number, sourceHeight: number) => {
 	const sourceRatio = sourceWidth / sourceHeight;
@@ -163,7 +255,7 @@ const averageColor = (colors: RgbColor[], fallback: RgbColor) => {
 	return makeColor(total.r / colors.length, total.g / colors.length, total.b / colors.length);
 };
 
-const createTextureCanvas = (image: HTMLImageElement) => {
+const createTextureCanvas = (image: LoadedImage) => {
 	const canvas = document.createElement('canvas');
 	canvas.width = TEXTURE_SIZE;
 	canvas.height = TEXTURE_SIZE;
@@ -176,7 +268,17 @@ const createTextureCanvas = (image: HTMLImageElement) => {
 	const crop = coverCrop(image.width, image.height);
 	ctx.imageSmoothingEnabled = true;
 	ctx.filter = 'contrast(1.05) saturate(1.03) brightness(1.01)';
-	ctx.drawImage(image, crop.sx, crop.sy, crop.sWidth, crop.sHeight, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
+	ctx.drawImage(
+		image.source,
+		crop.sx,
+		crop.sy,
+		crop.sWidth,
+		crop.sHeight,
+		0,
+		0,
+		TEXTURE_SIZE,
+		TEXTURE_SIZE
+	);
 	ctx.filter = 'none';
 
 	return canvas;
@@ -211,11 +313,11 @@ const derivePalette = (imageData: ImageData, theme: StyleTheme) => {
 		);
 	}
 
-	const sortedLuminance = samples
-		.map((sample) => sample.lum)
-		.sort((left, right) => left - right);
+	const sortedLuminance = samples.map((sample) => sample.lum).sort((left, right) => left - right);
 	const sampleAt = (ratio: number) =>
-		sortedLuminance[Math.min(sortedLuminance.length - 1, Math.floor(sortedLuminance.length * ratio))];
+		sortedLuminance[
+			Math.min(sortedLuminance.length - 1, Math.floor(sortedLuminance.length * ratio))
+		];
 	const thresholds = [sampleAt(0.18), sampleAt(0.38), sampleAt(0.62), sampleAt(0.84)];
 	const buckets: RgbColor[][] = [[], [], [], [], []];
 
@@ -309,7 +411,11 @@ const posterizeTexture = (
 				Math.abs(
 					lum -
 						luminance(
-							makeColor(sourceData[rightIndex], sourceData[rightIndex + 1], sourceData[rightIndex + 2])
+							makeColor(
+								sourceData[rightIndex],
+								sourceData[rightIndex + 1],
+								sourceData[rightIndex + 2]
+							)
 						)
 				) +
 				Math.abs(
@@ -493,39 +599,248 @@ const buildAnimatedAvatarSvg = ({
 	`;
 };
 
+const LEFT_EAR_PATH =
+	'M356 236 C244 254 190 382 242 558 C286 512 320 424 402 278 C392 246 376 232 356 236 Z';
+const RIGHT_EAR_PATH =
+	'M668 236 C780 254 834 382 782 558 C738 512 704 424 622 278 C632 246 648 232 668 236 Z';
+const CHEST_PATH =
+	'M334 772 C390 698 451 668 512 668 C573 668 634 698 690 772 C642 834 582 868 512 868 C442 868 382 834 334 772 Z';
+const COLLAR_PATH =
+	'M376 728 C428 706 470 698 512 698 C554 698 596 706 648 728 L622 772 C584 784 548 790 512 790 C476 790 440 784 402 772 Z';
+const NOSE_PATH =
+	'M454 588 C454 560 480 544 512 544 C544 544 570 560 570 588 C570 620 544 638 512 640 C480 638 454 620 454 588 Z';
+
+const drawFilledPath = (
+	ctx: CanvasRenderingContext2D,
+	pathDefinition: string,
+	fillStyle: string,
+	alpha = 1
+) => {
+	ctx.save();
+	ctx.globalAlpha = alpha;
+	ctx.fillStyle = fillStyle;
+	ctx.fill(new Path2D(pathDefinition));
+	ctx.restore();
+};
+
+const drawStrokedPath = (
+	ctx: CanvasRenderingContext2D,
+	pathDefinition: string,
+	strokeStyle: string,
+	lineWidth: number,
+	alpha = 1
+) => {
+	ctx.save();
+	ctx.globalAlpha = alpha;
+	ctx.strokeStyle = strokeStyle;
+	ctx.lineWidth = lineWidth;
+	ctx.lineCap = 'round';
+	ctx.stroke(new Path2D(pathDefinition));
+	ctx.restore();
+};
+
+const buildFurClipPath = () => {
+	const clipPath = new Path2D();
+	clipPath.addPath(new Path2D(LEFT_EAR_PATH));
+	clipPath.addPath(new Path2D(RIGHT_EAR_PATH));
+
+	const headPath = new Path2D();
+	headPath.ellipse(512, 452, 222, 250, 0, 0, Math.PI * 2);
+	clipPath.addPath(headPath);
+	clipPath.addPath(new Path2D(CHEST_PATH));
+
+	return clipPath;
+};
+
+const drawAvatarPoster = ({
+	textureCanvas,
+	palette,
+	theme,
+	dogName,
+	equippedCount
+}: {
+	textureCanvas: HTMLCanvasElement;
+	palette: Palette;
+	theme: StyleTheme;
+	dogName: string;
+	equippedCount: number;
+}) => {
+	const canvas = document.createElement('canvas');
+	canvas.width = SIZE;
+	canvas.height = SIZE;
+	const ctx = canvas.getContext('2d');
+
+	if (!ctx) {
+		throw new Error('Canvas non disponible dans ce navigateur.');
+	}
+
+	const background = ctx.createLinearGradient(116, 52, 886, 972);
+	background.addColorStop(0, theme.background[0]);
+	background.addColorStop(1, theme.background[1]);
+	ctx.fillStyle = background;
+	ctx.fillRect(0, 0, SIZE, SIZE);
+
+	ctx.fillStyle = formatColor(palette.highlight, 0.34);
+	ctx.beginPath();
+	ctx.arc(208, 188, 146, 0, Math.PI * 2);
+	ctx.fill();
+
+	ctx.fillStyle = formatColor(palette.softAccent, 0.4);
+	ctx.beginPath();
+	ctx.arc(816, 214, 142, 0, Math.PI * 2);
+	ctx.fill();
+
+	ctx.fillStyle = formatColor(palette.line, 0.12);
+	ctx.beginPath();
+	ctx.ellipse(512, 890, 236, 52, 0, 0, Math.PI * 2);
+	ctx.fill();
+
+	drawFilledPath(ctx, LEFT_EAR_PATH, formatColor(palette.shadow));
+	drawFilledPath(ctx, RIGHT_EAR_PATH, formatColor(palette.shadow));
+	drawFilledPath(ctx, CHEST_PATH, formatColor(palette.base));
+
+	ctx.fillStyle = formatColor(palette.base);
+	ctx.beginPath();
+	ctx.ellipse(512, 452, 226, 254, 0, 0, Math.PI * 2);
+	ctx.fill();
+
+	const furClipPath = buildFurClipPath();
+	ctx.save();
+	ctx.clip(furClipPath);
+	ctx.drawImage(textureCanvas, 206, 138, 612, 752);
+	const wash = ctx.createLinearGradient(220, 136, 792, 844);
+	wash.addColorStop(0, formatColor(hexToRgb(theme.wash), 0.35));
+	wash.addColorStop(0.44, 'rgba(255,255,255,0.08)');
+	wash.addColorStop(1, formatColor(palette.shadow, 0.18));
+	ctx.fillStyle = wash;
+	ctx.fillRect(206, 138, 612, 752);
+	ctx.restore();
+
+	drawFilledPath(ctx, LEFT_EAR_PATH, formatColor(palette.light), 0.18);
+	drawFilledPath(ctx, RIGHT_EAR_PATH, formatColor(palette.light), 0.18);
+
+	ctx.fillStyle = formatColor(palette.highlight, 0.22);
+	ctx.beginPath();
+	ctx.ellipse(512, 388, 136, 88, 0, 0, Math.PI * 2);
+	ctx.fill();
+
+	drawFilledPath(ctx, CHEST_PATH, formatColor(palette.light), 0.54);
+	drawFilledPath(ctx, COLLAR_PATH, formatColor(palette.collar));
+
+	ctx.fillStyle = formatColor(palette.accent);
+	ctx.beginPath();
+	ctx.arc(512, 770, 28, 0, Math.PI * 2);
+	ctx.fill();
+
+	ctx.fillStyle = 'rgba(255,255,255,0.9)';
+	ctx.fillRect(508, 758, 8, 24);
+	ctx.fillRect(500, 766, 24, 8);
+
+	ctx.fillStyle = formatColor(palette.light);
+	ctx.beginPath();
+	ctx.ellipse(512, 586, 134, 108, 0, 0, Math.PI * 2);
+	ctx.fill();
+
+	ctx.fillStyle = formatColor(palette.highlight, 0.92);
+	ctx.beginPath();
+	ctx.ellipse(512, 612, 94, 70, 0, 0, Math.PI * 2);
+	ctx.fill();
+
+	drawStrokedPath(
+		ctx,
+		'M438 582 C464 560 488 552 512 552 C536 552 560 560 586 582',
+		formatColor(palette.shadow),
+		10,
+		0.24
+	);
+	drawStrokedPath(
+		ctx,
+		'M460 540 C478 520 494 512 512 512 C530 512 546 520 564 540',
+		formatColor(palette.highlight),
+		14,
+		0.68
+	);
+
+	ctx.fillStyle = formatColor(palette.line);
+	ctx.beginPath();
+	ctx.ellipse(432, 474, 18, 11, 0, 0, Math.PI * 2);
+	ctx.ellipse(592, 474, 18, 11, 0, 0, Math.PI * 2);
+	ctx.fill();
+
+	ctx.fillStyle = formatColor(palette.highlight);
+	ctx.beginPath();
+	ctx.arc(437, 472, 2.4, 0, Math.PI * 2);
+	ctx.arc(597, 472, 2.4, 0, Math.PI * 2);
+	ctx.fill();
+
+	drawFilledPath(ctx, NOSE_PATH, formatColor(palette.nose));
+	drawStrokedPath(
+		ctx,
+		'M486 586 C494 578 502 576 512 576 C522 576 530 578 538 586',
+		formatColor(palette.highlight),
+		8,
+		0.2
+	);
+	drawStrokedPath(ctx, 'M512 640 V680', formatColor(palette.line), 8);
+	drawStrokedPath(ctx, 'M512 680 C496 702 474 710 454 710', formatColor(palette.line), 8);
+	drawStrokedPath(ctx, 'M512 680 C528 702 550 710 570 710', formatColor(palette.line), 8);
+	drawStrokedPath(ctx, 'M386 438 C408 420 426 412 448 410', formatColor(palette.line), 10, 0.22);
+	drawStrokedPath(ctx, 'M638 438 C616 420 598 412 576 410', formatColor(palette.line), 10, 0.22);
+
+	for (let index = 0; index < Math.min(equippedCount, 3); index += 1) {
+		const x = 348 + index * 96;
+		ctx.fillStyle = formatColor(palette.softAccent, 0.92);
+		ctx.beginPath();
+		ctx.arc(x, 874, 28, 0, Math.PI * 2);
+		ctx.fill();
+
+		ctx.fillStyle = formatColor(palette.accent, 0.96);
+		ctx.beginPath();
+		ctx.arc(x, 874, 14, 0, Math.PI * 2);
+		ctx.fill();
+	}
+
+	ctx.fillStyle = formatColor(palette.line, 0.56);
+	ctx.font = '800 40px "Avenir Next", "Segoe UI", sans-serif';
+	ctx.textAlign = 'center';
+	ctx.fillText(dogName.trim() || 'Compagnon canin', 512, 956);
+
+	return canvas.toDataURL('image/png');
+};
+
 export async function stylizeAvatarFromPhoto({
 	file,
 	styleId,
 	dogName,
-	equippedCount
-}: {
-	file: File;
-	styleId: string;
-	dogName: string;
-	equippedCount: number;
-}) {
-	const image = await loadImage(file);
-	const theme = styleThemes[styleId] ?? styleThemes.heroic;
-	const textureCanvas = createTextureCanvas(image);
-	const textureCtx = textureCanvas.getContext('2d');
+	equippedCount,
+	sourceUrl
+}: StylizeAvatarInput) {
+	const image = await loadImage(file, sourceUrl);
+	try {
+		const theme = styleThemes[styleId] ?? styleThemes.heroic;
+		const textureCanvas = createTextureCanvas(image);
+		const textureCtx = textureCanvas.getContext('2d');
 
-	if (!textureCtx) {
-		throw new Error('Canvas non disponible dans ce navigateur.');
+		if (!textureCtx) {
+			throw new Error('Canvas non disponible dans ce navigateur.');
+		}
+
+		const baseImageData = textureCtx.getImageData(0, 0, textureCanvas.width, textureCanvas.height);
+		const { palette, thresholds } = derivePalette(baseImageData, theme);
+		posterizeTexture(textureCanvas, palette, thresholds);
+		const imageDataUrl = drawAvatarPoster({
+			textureCanvas,
+			palette,
+			theme,
+			dogName,
+			equippedCount
+		});
+
+		return {
+			imageDataUrl,
+			prompt: `Avatar canin anime, proportions realistes, palette simplifiee, style ${styleId}`
+		};
+	} finally {
+		image.release?.();
 	}
-
-	const baseImageData = textureCtx.getImageData(0, 0, textureCanvas.width, textureCanvas.height);
-	const { palette, thresholds } = derivePalette(baseImageData, theme);
-	const textureDataUrl = posterizeTexture(textureCanvas, palette, thresholds);
-	const svg = buildAnimatedAvatarSvg({
-		textureDataUrl,
-		palette,
-		theme,
-		dogName,
-		equippedCount
-	});
-
-	return {
-		imageDataUrl: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
-		prompt: `Avatar canin anime, proportions realistes, palette simplifiee, style ${styleId}`
-	};
 }

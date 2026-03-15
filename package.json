@@ -67,6 +67,8 @@
 		"@capacitor/cli": "^8.2.0",
 		"@capacitor/core": "^8.2.0",
 		"@capacitor/ios": "^8.2.0",
-		"@sveltejs/adapter-static": "^3.0.10"
+		"@google/genai": "^1.45.0",
+		"@sveltejs/adapter-static": "^3.0.10",
+		"heic2any": "^0.0.4"
 	}
 }

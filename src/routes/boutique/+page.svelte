@@ -6,6 +6,13 @@
 	const app = fromStore(vetplay);
 	const ownedCosmetics = $derived(getOwnedCosmeticSet(app.current));
 	const equippedCosmetics = $derived(getEquippedCosmetics(app.current));
+
+	const slotLabels = {
+		outfit: 'Tenue',
+		accessory: 'Accessoire',
+		background: 'Fond',
+		badge: 'Badge'
+	} as const;
 </script>
 
 <section class="hero-card compact">
@@ -56,7 +63,10 @@
 			{@const isOwned = ownedCosmetics.has(item.id)}
 			{@const isEquipped = app.current.equippedCosmetics[item.slot] === item.id}
 			<article class={`shop-card accent-${item.accent}`}>
-				<div class="shop-visual"></div>
+				<div class={`shop-visual shop-visual-${item.accent}`}>
+					<span class="shop-visual-icon" aria-hidden="true">{item.icon}</span>
+					<span class="shop-visual-slot">{slotLabels[item.slot]}</span>
+				</div>
 				<div class="shop-copy">
 					<div class="shop-topline">
 						<h4>{item.name}</h4>

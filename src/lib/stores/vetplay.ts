@@ -36,6 +36,8 @@ export type VetPlayState = {
 	avatarStyleId: string;
 	avatarImage: string | null;
 	avatarGeneratedAt: string | null;
+	avatarBreedGuess: string | null;
+	avatarProvider: 'gemini' | null;
 	lastAvatarPrompt: string | null;
 };
 
@@ -74,6 +76,8 @@ const baseState = (): VetPlayState => ({
 	avatarStyleId: avatarStyles[0].id,
 	avatarImage: null,
 	avatarGeneratedAt: null,
+	avatarBreedGuess: null,
+	avatarProvider: null,
 	lastAvatarPrompt: null
 });
 
@@ -201,6 +205,12 @@ const normalizeState = (value: unknown): VetPlayState => {
 			typeof candidate.avatarGeneratedAt === 'string'
 				? candidate.avatarGeneratedAt
 				: defaults.avatarGeneratedAt,
+		avatarBreedGuess:
+			typeof candidate.avatarBreedGuess === 'string'
+				? candidate.avatarBreedGuess
+				: defaults.avatarBreedGuess,
+		avatarProvider:
+			candidate.avatarProvider === 'gemini' ? candidate.avatarProvider : defaults.avatarProvider,
 		lastAvatarPrompt:
 			typeof candidate.lastAvatarPrompt === 'string'
 				? candidate.lastAvatarPrompt
@@ -350,11 +360,18 @@ export const vetplay = {
 				avatarStyles.find((style) => style.id === avatarStyleId)?.id ?? state.avatarStyleId
 		}));
 	},
-	setAvatarResult(imageDataUrl: string, prompt: string) {
+	setAvatarResult(
+		imageDataUrl: string,
+		prompt: string,
+		breedGuess: string | null = null,
+		provider: 'gemini' = 'gemini'
+	) {
 		store.update((state) => ({
 			...state,
 			avatarImage: imageDataUrl,
 			avatarGeneratedAt: new Date().toISOString(),
+			avatarBreedGuess: breedGuess,
+			avatarProvider: provider,
 			lastAvatarPrompt: prompt
 		}));
 	},

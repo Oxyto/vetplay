@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { fromStore } from 'svelte/store';
 	import { avatarStyles, cosmeticCatalog } from '$lib/app-data';
-	import { stylizeAvatarFromPhoto } from '$lib/avatar-stylizer';
+	import {
+		dogPhotoAcceptValue,
+		geminiAvatarEnabled,
+		generateGeminiAvatarFromPhoto,
+		isAcceptedDogPhotoFile,
+		prepareDogPhotoFile
+	} from '$lib/gemini-avatar';
 	import {
 		getEquippedCosmetics,
 		getPlayerLevel,
@@ -18,8 +24,10 @@
 	let styleId = $state(app.current.avatarStyleId);
 	let selectedFile = $state<File | null>(null);
 	let previewUrl = $state<string | null>(null);
+	let preparingFile = $state(false);
 	let generating = $state(false);
 	let generationError = $state<string | null>(null);
+	let generationNotice = $state<string | null>(null);
 	let fileInput: HTMLInputElement | null = null;
 
 	function syncProfileFields() {
@@ -47,7 +55,9 @@
 		}
 
 		selectedFile = null;
+		preparingFile = false;
 		generationError = null;
+		generationNotice = null;
 
 		if (fileInput) {
 			fileInput.value = '';
@@ -58,7 +68,7 @@
 		fileInput?.click();
 	}
 
-	function handleFileChange(event: Event) {
+	async function handleFileChange(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		const file = input.files?.[0] ?? null;
 
@@ -67,15 +77,32 @@
 			return;
 		}
 
-		if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+		if (!isAcceptedDogPhotoFile(file)) {
 			clearSelectedFile();
-			generationError = 'Formats acceptes: PNG, JPG ou WebP.';
+			generationError = 'Formats acceptés : PNG, JPG, JPEG, WebP, HEIC ou HEIF.';
 			return;
 		}
 
 		clearSelectedFile();
-		selectedFile = file;
-		previewUrl = URL.createObjectURL(file);
+		preparingFile = true;
+
+		try {
+			const normalizedFile = await prepareDogPhotoFile(file);
+			selectedFile = normalizedFile;
+			previewUrl = URL.createObjectURL(normalizedFile);
+
+			if (normalizedFile !== file) {
+				generationNotice = 'Photo convertie automatiquement pour une lecture mobile plus fiable.';
+			}
+		} catch (error) {
+			clearSelectedFile();
+			generationError =
+				error instanceof Error
+					? error.message
+					: "La photo n'a pas pu être préparée pour la génération.";
+		} finally {
+			preparingFile = false;
+		}
 	}
 
 	async function saveProfile() {
@@ -85,6 +112,7 @@
 	async function generateAvatar(event: SubmitEvent) {
 		event.preventDefault();
 		generationError = null;
+		generationNotice = null;
 		await saveProfile();
 
 		if (!selectedFile) {
@@ -92,16 +120,30 @@
 			return;
 		}
 
+		if (!geminiAvatarEnabled) {
+			generationError =
+				'Ajoute une valeur à PUBLIC_GEMINI_API_KEY dans .env pour activer la génération IA.';
+			return;
+		}
+
 		generating = true;
 
 		try {
-			const result = await stylizeAvatarFromPhoto({
+			const geminiResult = await generateGeminiAvatarFromPhoto({
 				file: selectedFile,
 				styleId,
 				dogName,
-				equippedCount: equippedCosmetics.length
+				equippedCount: equippedCosmetics.length,
+				sourceUrl: previewUrl ?? undefined
 			});
-			vetplay.setAvatarResult(result.imageDataUrl, result.prompt);
+
+			generationNotice = 'Avatar généré avec Gemini à partir de la photo canine.';
+			vetplay.setAvatarResult(
+				geminiResult.imageDataUrl,
+				geminiResult.prompt,
+				geminiResult.breedGuess,
+				geminiResult.provider
+			);
 		} catch (error) {
 			generationError = error instanceof Error ? error.message : 'La génération a échoué.';
 		} finally {
@@ -110,6 +152,9 @@
 	}
 
 	const avatarTitle = $derived(app.current.dogName || 'Avatar vétérinaire');
+	const avatarProviderLabel = $derived(
+		app.current.avatarProvider === 'gemini' ? 'Gemini Vision + Image' : null
+	);
 	const totalBadges = $derived(
 		cosmeticCatalog.filter((item) => app.current.ownedCosmeticIds.includes(item.id)).length
 	);
@@ -123,7 +168,7 @@
 				<img src={app.current.avatarImage} alt={`Avatar de ${avatarTitle}`} class="avatar-render" />
 			{:else}
 				<div class="avatar-placeholder">
-					<span>Avatar canin anime</span>
+					<span>Avatar canin animé</span>
 					<strong>{avatarTitle}</strong>
 				</div>
 			{/if}
@@ -145,10 +190,17 @@
 
 	<form class="panel-card form-card" onsubmit={generateAvatar}>
 		<p class="section-kicker">Canin uniquement</p>
-		<h3>Generer un avatar anime</h3>
+		<h3>Générer un avatar animé</h3>
 		<p class="muted">
-			Le generateur transforme une photo de chien en portrait anime stylise, avec proportions
-			realistes et palette simplifiee. Utilise de preference une photo nette de tete ou de buste.
+			Gemini transforme une photo de chien en portrait 3D stylisé, avec proportions canines
+			réalistes et palette simplifiée. Utilise de préférence une photo nette de tête ou de buste.
+		</p>
+		<p class="helper-copy">
+			{#if geminiAvatarEnabled}
+				Gemini analyse la race probable puis régénère un avatar canin type film d'animation.
+			{:else}
+				Renseigne `PUBLIC_GEMINI_API_KEY` dans `.env` pour activer la génération IA sur mobile.
+			{/if}
 		</p>
 
 		<label class="field">
@@ -174,7 +226,7 @@
 			<span>Photo du chien</span>
 			<input
 				bind:this={fileInput}
-				accept="image/png,image/jpeg,image/webp"
+				accept={dogPhotoAcceptValue}
 				class="sr-only-input"
 				type="file"
 				onchange={handleFileChange}
@@ -183,22 +235,40 @@
 			<div class="file-picker">
 				<div class="file-picker-copy">
 					<strong>
-						{selectedFile ? 'Photo canine selectionnee' : 'Importer une photo canine'}
+						{selectedFile
+							? 'Photo canine sélectionnée'
+							: preparingFile
+								? 'Préparation de la photo...'
+								: 'Importer une photo canine'}
 					</strong>
 					<p>
 						{selectedFile
 							? selectedFile.name
-							: 'PNG, JPG ou WebP. Cadrage tete ou buste recommande.'}
+							: 'PNG, JPG, JPEG, WebP, HEIC ou HEIF. Cadrage tête ou buste recommandé.'}
 					</p>
 				</div>
 
 				<div class="wrap-actions">
-					<button type="button" class="secondary-button" onclick={openFilePicker}>
-						{selectedFile ? 'Changer la photo' : 'Selectionner un fichier'}
+					<button
+						type="button"
+						class="secondary-button"
+						onclick={openFilePicker}
+						disabled={preparingFile || generating}
+					>
+						{preparingFile
+							? 'Préparation...'
+							: selectedFile
+								? 'Changer la photo'
+								: 'Sélectionner un fichier'}
 					</button>
 
 					{#if selectedFile}
-						<button type="button" class="ghost-button" onclick={clearSelectedFile}>
+						<button
+							type="button"
+							class="ghost-button"
+							onclick={clearSelectedFile}
+							disabled={preparingFile || generating}
+						>
 							Retirer
 						</button>
 					{/if}
@@ -216,19 +286,50 @@
 			<p class="error-banner">{generationError}</p>
 		{/if}
 
+		{#if generationNotice}
+			<p class="info-banner">{generationNotice}</p>
+		{/if}
+
+		{#if app.current.avatarBreedGuess || app.current.lastAvatarPrompt}
+			<div class="analysis-card">
+				<div class="analysis-meta">
+					{#if avatarProviderLabel}
+						<span class="analysis-pill">{avatarProviderLabel}</span>
+					{/if}
+					{#if app.current.avatarBreedGuess}
+						<span class="analysis-pill analysis-pill-soft">
+							Race estimée : {app.current.avatarBreedGuess}
+						</span>
+					{/if}
+				</div>
+
+				{#if app.current.lastAvatarPrompt}
+					<p>{app.current.lastAvatarPrompt}</p>
+				{/if}
+			</div>
+		{/if}
+
 		<div class="avatar-actions">
-			<button type="submit" class="primary-button" disabled={generating || !selectedFile}>
-				{generating ? 'Génération en cours...' : "Générer l'avatar"}
+			<button
+				type="submit"
+				class="primary-button"
+				disabled={generating || preparingFile || !selectedFile || !geminiAvatarEnabled}
+			>
+				{generating
+					? 'Génération en cours...'
+					: preparingFile
+						? 'Préparation de la photo...'
+						: 'Générer avec Gemini'}
 			</button>
 			<button type="button" class="secondary-button" onclick={saveProfile}
-				>Mettre a jour le profil</button
+				>Mettre à jour le profil</button
 			>
 		</div>
 
 		<div class="upload-steps">
-			<span>1. Selection canine</span>
-			<span>2. Palette simplifiee</span>
-			<span>3. Avatar anime</span>
+			<span>1. Sélection canine</span>
+			<span>2. Analyse de race</span>
+			<span>3. Avatar 3D stylisé</span>
 		</div>
 	</form>
 </section>
